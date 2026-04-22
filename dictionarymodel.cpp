@@ -88,6 +88,7 @@ bool DictionaryModel::hasAddress(quint16 address) const
     return m_rowByAddress.contains(address);
 }
 
+
 bool DictionaryModel::metadataForAddress(quint16 address, quint8 *type, quint8 *access, QString *name, QString *unit) const
 {
     const int row = m_rowByAddress.value(address, -1);
@@ -172,6 +173,20 @@ QVariantList DictionaryModel::selectedPlotAddresses() const
     }
 
     return out;
+}
+
+bool DictionaryModel::isPlotEnabledAddress(int address) const
+{
+    if (address < 0 || address > 0xFFFF) {
+        return false;
+    }
+
+    const int row = m_rowByAddress.value(static_cast<quint16>(address), -1);
+    if (row < 0) {
+        return false;
+    }
+
+    return m_entries[row].plotEnabled;
 }
 
 void DictionaryModel::setPlotEnabledByRow(int row, bool enabled)

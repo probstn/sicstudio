@@ -70,6 +70,7 @@ public:
     bool setPlotEnabledByAddress(quint16 address, bool enabled);
 
     Q_INVOKABLE QVariantList selectedPlotAddresses() const;
+    Q_INVOKABLE bool isPlotEnabledAddress(int address) const;
     Q_INVOKABLE void setPlotEnabledByRow(int row, bool enabled);
     Q_INVOKABLE int addressAt(int row) const;
     Q_INVOKABLE bool isEditableAt(int row) const;
