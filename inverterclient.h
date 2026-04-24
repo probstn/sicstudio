@@ -74,7 +74,7 @@ private:
     static constexpr quint8 CmdError = 0x8F;
 
     static constexpr quint16 UdpPort = 3040;
-    static constexpr int DictRecordLen = 24;
+    static constexpr int DictRecordLen = 25;
 
     DictionaryModel *m_model;
     QTcpSocket m_tcp;

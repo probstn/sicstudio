@@ -25,6 +25,8 @@ QVariant DictionaryModel::data(const QModelIndex &index, int role) const
     switch (role) {
     case AddressRole:
         return static_cast<int>(entry.address);
+    case GroupRole:
+        return static_cast<int>(entry.groupId);
     case NameRole:
         return entry.name;
     case UnitRole:
@@ -54,6 +56,7 @@ QHash<int, QByteArray> DictionaryModel::roleNames() const
 {
     return {
         {AddressRole, "address"},
+        {GroupRole, "groupId"},
         {NameRole, "name"},
         {UnitRole, "unit"},
         {TypeRole, "type"},
