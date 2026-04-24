@@ -30,6 +30,7 @@ public:
 
     enum Roles {
         AddressRole = Qt::UserRole + 1,
+        GroupRole,
         NameRole,
         UnitRole,
         TypeRole,
@@ -44,6 +45,7 @@ public:
 
     struct Entry {
         quint16 address = 0;
+        quint8 groupId = 0;
         quint8 type = 0;
         quint8 access = 0;
         QString name;

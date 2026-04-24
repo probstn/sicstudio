@@ -662,10 +662,11 @@ void InverterClient::handleDictionaryChunk(const QByteArray &payload)
         DictionaryModel::Entry entry;
         entry.address = qFromLittleEndian<quint16>(rec);
         const quint8 ctrl = rec[2];
+        entry.groupId = rec[3];
         entry.type = ctrl & 0x0F;
         entry.access = (ctrl >> 4) & 0x03;
-        entry.name = trimAscii(payload.mid(i + 3, 16));
-        entry.unit = trimAscii(payload.mid(i + 19, 5));
+        entry.name = trimAscii(payload.mid(i + 4, 16));
+        entry.unit = trimAscii(payload.mid(i + 20, 5));
         entry.value = QVariant();
         entry.plotEnabled = false;
         m_dictBuilding.push_back(entry);
