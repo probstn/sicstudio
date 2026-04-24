@@ -73,8 +73,11 @@ private:
     static constexpr quint8 CmdUpdateConfigAck = 0x86;
     static constexpr quint8 CmdError = 0x8F;
 
+    static constexpr int TcpHeaderLen = 5;
+    static constexpr int MaxPayloadLen = 250;
     static constexpr quint16 UdpPort = 3040;
     static constexpr int DictRecordLen = 25;
+    static constexpr quint8 DictGroupAll = 0xFF;
 
     DictionaryModel *m_model;
     QTcpSocket m_tcp;
@@ -87,6 +90,9 @@ private:
 
     QVector<DictionaryModel::Entry> m_dictBuilding;
     QVector<quint16> m_pendingReadAddresses;
+    quint16 m_pendingWriteFirstAddress = 0;
+    quint8 m_pendingWriteCount = 0;
+    bool m_hasPendingWrite = false;
 
     QHash<quint8, QVector<quint16>> m_streamAddressOrder;
     QHash<quint8, int> m_streamSampleSize;
@@ -104,7 +110,7 @@ private:
     void setStreamActive(bool active);
     void resetStreamRuntimeState();
 
-    void sendFrame(quint8 cmd, const QByteArray &payload);
+    bool sendFrame(quint8 cmd, const QByteArray &payload);
     void processTcpBuffer();
     void handleFrame(quint8 cmd, const QByteArray &payload);
 

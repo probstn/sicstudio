@@ -84,7 +84,11 @@ void InverterClient::requestDictionary()
 
     m_dictBuilding.clear();
     m_dictFinalizeTimer.stop();
-    sendFrame(CmdDictionaryReq, {});
+    QByteArray payload;
+    payload.append(static_cast<char>(DictGroupAll));
+    if (!sendFrame(CmdDictionaryReq, payload)) {
+        return;
+    }
     setStatus(QStringLiteral("Dictionary request sent"));
 }
 
@@ -120,7 +124,10 @@ void InverterClient::readAddresses(const QVariantList &addresses)
     }
 
     m_pendingReadAddresses = requested;
-    sendFrame(CmdReadReq, payload);
+    if (!sendFrame(CmdReadReq, payload)) {
+        m_pendingReadAddresses.clear();
+        return;
+    }
     setStatus(QStringLiteral("Read request: %1 item(s)").arg(requested.size()));
 }
 
@@ -171,7 +178,13 @@ void InverterClient::writeValue(int address, const QString &valueText)
     payload.append(static_cast<char>((addr >> 8) & 0xFF));
     payload.append(rawValue);
 
-    sendFrame(CmdWriteReq, payload);
+    m_pendingWriteFirstAddress = addr;
+    m_pendingWriteCount = 1;
+    m_hasPendingWrite = true;
+    if (!sendFrame(CmdWriteReq, payload)) {
+        m_hasPendingWrite = false;
+        return;
+    }
     setStatus(QStringLiteral("Write request: 0x%1").arg(addr, 4, 16, QLatin1Char('0')));
 }
 
@@ -191,7 +204,7 @@ void InverterClient::startStream(int streamId, int loopDivider, const QVariantLi
         const quint8 previousStreamId = static_cast<quint8>(m_activeStreamId);
         QByteArray stopPayload;
         stopPayload.append(static_cast<char>(previousStreamId));
-        sendFrame(CmdStreamStop, stopPayload);
+        (void)sendFrame(CmdStreamStop, stopPayload);
     }
 
     resetStreamRuntimeState();
@@ -232,7 +245,9 @@ void InverterClient::startStream(int streamId, int loopDivider, const QVariantLi
     m_pendingReadAddresses.clear();
     m_activeStreamId = streamId;
 
-    sendFrame(CmdStreamReq, payload);
+    if (!sendFrame(CmdStreamReq, payload)) {
+        return;
+    }
     setStatus(QStringLiteral("Stream request: id=%1 divider=%2 count=%3")
                   .arg(streamId)
                   .arg(loopDivider)
@@ -266,7 +281,9 @@ void InverterClient::stopStream(int streamId)
         setStreamActive(false);
     }
 
-    sendFrame(CmdStreamStop, payload);
+    if (!sendFrame(CmdStreamStop, payload)) {
+        return;
+    }
     setStatus(QStringLiteral("Stream stop request: id=%1").arg(streamId));
 }
 
@@ -287,7 +304,9 @@ void InverterClient::commitConfig()
         return;
     }
 
-    sendFrame(CmdUpdateConfig, {});
+    if (!sendFrame(CmdUpdateConfig, {})) {
+        return;
+    }
     setStatus(QStringLiteral("Update-config request sent"));
 }
 
@@ -310,6 +329,9 @@ void InverterClient::onTcpDisconnected()
 {
     m_udp.close();
     resetStreamRuntimeState();
+    m_hasPendingWrite = false;
+    m_pendingWriteCount = 0;
+    m_pendingWriteFirstAddress = 0;
     setStatus(QStringLiteral("Disconnected"));
     emit connectedChanged();
 }
@@ -323,6 +345,9 @@ void InverterClient::resetStreamRuntimeState()
     m_lastStreamTick.clear();
     m_pendingStreamUiValues.clear();
     m_pendingReadAddresses.clear();
+    m_hasPendingWrite = false;
+    m_pendingWriteCount = 0;
+    m_pendingWriteFirstAddress = 0;
     m_streamUiFlushTimer.stop();
     m_streamClock.invalidate();
     m_streamClockStarted = false;
@@ -400,14 +425,21 @@ void InverterClient::setStatus(const QString &text)
     emit statusChanged();
 }
 
-void InverterClient::sendFrame(quint8 cmd, const QByteArray &payload)
+bool InverterClient::sendFrame(quint8 cmd, const QByteArray &payload)
 {
     if (!connected()) {
-        return;
+        return false;
+    }
+
+    if (payload.size() > MaxPayloadLen) {
+        setStatus(QStringLiteral("Refused oversized payload (%1 > %2)")
+                      .arg(payload.size())
+                      .arg(MaxPayloadLen));
+        return false;
     }
 
     QByteArray frame;
-    frame.reserve(5 + payload.size());
+    frame.reserve(TcpHeaderLen + payload.size());
 
     frame.append(static_cast<char>(Start0));
     frame.append(static_cast<char>(Start1));
@@ -419,11 +451,12 @@ void InverterClient::sendFrame(quint8 cmd, const QByteArray &payload)
     frame.append(payload);
 
     m_tcp.write(frame);
+    return true;
 }
 
 void InverterClient::processTcpBuffer()
 {
-    while (m_tcpBuffer.size() >= 5) {
+    while (m_tcpBuffer.size() >= TcpHeaderLen) {
         int startIndex = -1;
         for (int i = 0; i < m_tcpBuffer.size() - 1; ++i) {
             if (static_cast<quint8>(m_tcpBuffer.at(i)) == Start0 && static_cast<quint8>(m_tcpBuffer.at(i + 1)) == Start1) {
@@ -439,14 +472,19 @@ void InverterClient::processTcpBuffer()
 
         if (startIndex > 0) {
             m_tcpBuffer.remove(0, startIndex);
-            if (m_tcpBuffer.size() < 5) {
+            if (m_tcpBuffer.size() < TcpHeaderLen) {
                 return;
             }
         }
 
         const quint16 payloadLen = static_cast<quint8>(m_tcpBuffer.at(3))
             | (static_cast<quint16>(static_cast<quint8>(m_tcpBuffer.at(4))) << 8);
-        const int frameLen = 5 + payloadLen;
+        if (payloadLen > MaxPayloadLen) {
+            m_tcpBuffer.remove(0, 1);
+            continue;
+        }
+
+        const int frameLen = TcpHeaderLen + payloadLen;
         if (m_tcpBuffer.size() < frameLen) {
             return;
         }
@@ -716,13 +754,33 @@ void InverterClient::handleReadData(const QByteArray &payload)
 void InverterClient::handleWriteAck(const QByteArray &payload)
 {
     if (payload.size() != 3) {
+        m_hasPendingWrite = false;
         setStatus(QStringLiteral("Invalid write-ack payload"));
         return;
     }
 
     const quint16 firstAddr = static_cast<quint8>(payload.at(0))
         | (static_cast<quint16>(static_cast<quint8>(payload.at(1))) << 8);
-    const int count = static_cast<quint8>(payload.at(2));
+    const quint8 count = static_cast<quint8>(payload.at(2));
+
+    if (!m_hasPendingWrite) {
+        setStatus(QStringLiteral("Unexpected write-ack: first=0x%1 count=%2")
+                      .arg(firstAddr, 4, 16, QLatin1Char('0'))
+                      .arg(count));
+        return;
+    }
+
+    if (firstAddr != m_pendingWriteFirstAddress || count != m_pendingWriteCount) {
+        setStatus(QStringLiteral("Write-ack mismatch: expected first=0x%1 count=%2, got first=0x%3 count=%4")
+                      .arg(m_pendingWriteFirstAddress, 4, 16, QLatin1Char('0'))
+                      .arg(m_pendingWriteCount)
+                      .arg(firstAddr, 4, 16, QLatin1Char('0'))
+                      .arg(count));
+        m_hasPendingWrite = false;
+        return;
+    }
+
+    m_hasPendingWrite = false;
     setStatus(QStringLiteral("Write acknowledged: first=0x%1 count=%2")
                   .arg(firstAddr, 4, 16, QLatin1Char('0'))
                   .arg(count));
@@ -808,6 +866,7 @@ void InverterClient::handleErrorFrame(const QByteArray &payload)
                             .arg(address, 4, 16, QLatin1Char('0'))
                             .arg(code, 2, 16, QLatin1Char('0'))
                             .arg(codeText);
+    m_hasPendingWrite = false;
     setStatus(msg);
     emit commandError(msg);
 }
