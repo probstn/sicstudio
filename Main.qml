@@ -552,7 +552,8 @@ ApplicationWindow {
 
                             Button {
                                 Layout.fillWidth: true
-                                text: "Commit && Activate Configuration"
+                                text: "Send CMD_CONFIG_COMMIT (0x06)"
+                                enabled: root.inverterClientObj.connected
                                 onClicked: root.inverterClientObj.commitConfig()
                             }
                         }

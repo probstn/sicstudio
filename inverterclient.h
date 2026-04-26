@@ -90,6 +90,9 @@ private:
 
     QVector<DictionaryModel::Entry> m_dictBuilding;
     QVector<quint16> m_pendingReadAddresses;
+    QVector<QVector<quint16>> m_pendingReadBatches;
+    int m_readAllTotalCount = 0;
+    int m_readAllCompletedCount = 0;
     quint16 m_pendingWriteFirstAddress = 0;
     quint8 m_pendingWriteCount = 0;
     bool m_hasPendingWrite = false;
@@ -111,6 +114,8 @@ private:
     void resetStreamRuntimeState();
 
     bool sendFrame(quint8 cmd, const QByteArray &payload);
+    bool sendReadRequest(const QVector<quint16> &addresses);
+    void sendNextReadBatch();
     void processTcpBuffer();
     void handleFrame(quint8 cmd, const QByteArray &payload);
 

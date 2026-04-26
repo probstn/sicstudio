@@ -63,6 +63,9 @@ void InverterClient::connectToDevice(const QString &host, int port)
     m_tcpBuffer.clear();
     m_dictBuilding.clear();
     m_pendingReadAddresses.clear();
+    m_pendingReadBatches.clear();
+    m_readAllTotalCount = 0;
+    m_readAllCompletedCount = 0;
     setStatus(QStringLiteral("Connecting to %1:%2").arg(host).arg(port));
     m_tcp.connectToHost(host, static_cast<quint16>(port));
 }
@@ -99,9 +102,6 @@ void InverterClient::readAddresses(const QVariantList &addresses)
         return;
     }
 
-    QByteArray payload;
-    payload.reserve(addresses.size() * 2);
-
     QVector<quint16> requested;
     requested.reserve(addresses.size());
 
@@ -113,8 +113,6 @@ void InverterClient::readAddresses(const QVariantList &addresses)
         }
 
         const quint16 address = static_cast<quint16>(iv);
-        payload.append(static_cast<char>(address & 0xFF));
-        payload.append(static_cast<char>((address >> 8) & 0xFF));
         requested.push_back(address);
     }
 
@@ -123,9 +121,11 @@ void InverterClient::readAddresses(const QVariantList &addresses)
         return;
     }
 
-    m_pendingReadAddresses = requested;
-    if (!sendFrame(CmdReadReq, payload)) {
-        m_pendingReadAddresses.clear();
+    m_pendingReadBatches.clear();
+    m_readAllTotalCount = 0;
+    m_readAllCompletedCount = 0;
+
+    if (!sendReadRequest(requested)) {
         return;
     }
     setStatus(QStringLiteral("Read request: %1 item(s)").arg(requested.size()));
@@ -133,12 +133,61 @@ void InverterClient::readAddresses(const QVariantList &addresses)
 
 void InverterClient::readAllDictionaryValues()
 {
-    QVariantList addresses;
-    const int rows = m_model != nullptr ? m_model->rowCount() : 0;
-    for (int i = 0; i < rows; ++i) {
-        addresses.push_back(m_model->addressAt(i));
+    if (!connected()) {
+        setStatus(QStringLiteral("Not connected"));
+        return;
     }
-    readAddresses(addresses);
+
+    if (m_model == nullptr) {
+        setStatus(QStringLiteral("No dictionary model"));
+        return;
+    }
+
+    const int rows = m_model != nullptr ? m_model->rowCount() : 0;
+    if (rows <= 0) {
+        setStatus(QStringLiteral("Dictionary is empty"));
+        return;
+    }
+
+    QVector<QVector<quint16>> batches;
+    QVector<quint16> batch;
+    int responseBytes = 0;
+    int requestBytes = 0;
+    int totalCount = 0;
+
+    for (int i = 0; i < rows; ++i) {
+        const quint16 address = static_cast<quint16>(m_model->addressAt(i));
+        const int valueBytes = m_model->byteSizeForAddress(address);
+        if (valueBytes <= 0 || valueBytes > MaxPayloadLen) {
+            continue;
+        }
+
+        if (!batch.isEmpty() && ((responseBytes + valueBytes) > MaxPayloadLen || (requestBytes + 2) > MaxPayloadLen)) {
+            batches.push_back(batch);
+            batch.clear();
+            responseBytes = 0;
+            requestBytes = 0;
+        }
+
+        batch.push_back(address);
+        responseBytes += valueBytes;
+        requestBytes += 2;
+        ++totalCount;
+    }
+
+    if (!batch.isEmpty()) {
+        batches.push_back(batch);
+    }
+
+    if (batches.isEmpty()) {
+        setStatus(QStringLiteral("No readable dictionary values"));
+        return;
+    }
+
+    m_pendingReadBatches = batches;
+    m_readAllTotalCount = totalCount;
+    m_readAllCompletedCount = 0;
+    sendNextReadBatch();
 }
 
 void InverterClient::writeValue(int address, const QString &valueText)
@@ -345,6 +394,9 @@ void InverterClient::resetStreamRuntimeState()
     m_lastStreamTick.clear();
     m_pendingStreamUiValues.clear();
     m_pendingReadAddresses.clear();
+    m_pendingReadBatches.clear();
+    m_readAllTotalCount = 0;
+    m_readAllCompletedCount = 0;
     m_hasPendingWrite = false;
     m_pendingWriteCount = 0;
     m_pendingWriteFirstAddress = 0;
@@ -452,6 +504,49 @@ bool InverterClient::sendFrame(quint8 cmd, const QByteArray &payload)
 
     m_tcp.write(frame);
     return true;
+}
+
+bool InverterClient::sendReadRequest(const QVector<quint16> &addresses)
+{
+    if (addresses.isEmpty()) {
+        setStatus(QStringLiteral("No valid addresses to read"));
+        return false;
+    }
+
+    QByteArray payload;
+    payload.reserve(addresses.size() * 2);
+
+    for (const quint16 address : addresses) {
+        payload.append(static_cast<char>(address & 0xFF));
+        payload.append(static_cast<char>((address >> 8) & 0xFF));
+    }
+
+    m_pendingReadAddresses = addresses;
+    if (!sendFrame(CmdReadReq, payload)) {
+        m_pendingReadAddresses.clear();
+        return false;
+    }
+
+    return true;
+}
+
+void InverterClient::sendNextReadBatch()
+{
+    if (m_pendingReadBatches.isEmpty()) {
+        return;
+    }
+
+    const QVector<quint16> batch = m_pendingReadBatches.takeFirst();
+    if (!sendReadRequest(batch)) {
+        m_pendingReadBatches.clear();
+        m_readAllTotalCount = 0;
+        m_readAllCompletedCount = 0;
+        return;
+    }
+
+    setStatus(QStringLiteral("Read all values: %1/%2")
+                  .arg(m_readAllCompletedCount)
+                  .arg(m_readAllTotalCount));
 }
 
 void InverterClient::processTcpBuffer()
@@ -719,6 +814,7 @@ void InverterClient::handleReadData(const QByteArray &payload)
         return;
     }
 
+    const int decodedCount = m_pendingReadAddresses.size();
     int offset = 0;
     for (int i = 0; i < m_pendingReadAddresses.size(); ++i) {
         const quint16 addr = m_pendingReadAddresses[i];
@@ -745,10 +841,25 @@ void InverterClient::handleReadData(const QByteArray &payload)
     if (offset != payload.size()) {
         setStatus(QStringLiteral("Read response length mismatch"));
     } else {
-        setStatus(QStringLiteral("Read response parsed: %1 item(s)").arg(m_pendingReadAddresses.size()));
+        m_readAllCompletedCount += decodedCount;
+        m_pendingReadAddresses.clear();
+
+        if (!m_pendingReadBatches.isEmpty()) {
+            sendNextReadBatch();
+            return;
+        }
+
+        if (m_readAllTotalCount > 0) {
+            setStatus(QStringLiteral("Read all values parsed: %1 item(s)").arg(m_readAllCompletedCount));
+        } else {
+            setStatus(QStringLiteral("Read response parsed: %1 item(s)").arg(decodedCount));
+        }
     }
 
     m_pendingReadAddresses.clear();
+    m_pendingReadBatches.clear();
+    m_readAllTotalCount = 0;
+    m_readAllCompletedCount = 0;
 }
 
 void InverterClient::handleWriteAck(const QByteArray &payload)
@@ -867,6 +978,10 @@ void InverterClient::handleErrorFrame(const QByteArray &payload)
                             .arg(code, 2, 16, QLatin1Char('0'))
                             .arg(codeText);
     m_hasPendingWrite = false;
+    m_pendingReadAddresses.clear();
+    m_pendingReadBatches.clear();
+    m_readAllTotalCount = 0;
+    m_readAllCompletedCount = 0;
     setStatus(msg);
     emit commandError(msg);
 }
