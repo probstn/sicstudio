@@ -1,5 +1,7 @@
 #include "dictionarymodel.h"
 
+#include <algorithm>
+
 #include <QtEndian>
 
 DictionaryModel::DictionaryModel(QObject *parent)
@@ -39,6 +41,8 @@ QVariant DictionaryModel::data(const QModelIndex &index, int role) const
         return static_cast<int>(entry.access);
     case AccessNameRole:
         return accessName(entry.access);
+    case GroupNameRole:
+        return groupName(entry.groupId);
     case ValueRole:
         return entry.value;
     case ValueTextRole:
@@ -63,6 +67,7 @@ QHash<int, QByteArray> DictionaryModel::roleNames() const
         {TypeNameRole, "typeName"},
         {AccessRole, "access"},
         {AccessNameRole, "accessName"},
+        {GroupNameRole, "groupName"},
         {ValueRole, "value"},
         {ValueTextRole, "valueText"},
         {EditableRole, "editable"},
@@ -82,6 +87,12 @@ void DictionaryModel::setEntries(const QVector<Entry> &entries)
 {
     beginResetModel();
     m_entries = entries;
+    std::sort(m_entries.begin(), m_entries.end(), [](const Entry &lhs, const Entry &rhs) {
+        if (lhs.groupId != rhs.groupId) {
+            return lhs.groupId < rhs.groupId;
+        }
+        return lhs.address < rhs.address;
+    });
     rebuildIndex();
     endResetModel();
 }
@@ -272,6 +283,48 @@ QString DictionaryModel::accessName(quint8 access)
         return QStringLiteral("WL");
     default:
         return QStringLiteral("?");
+    }
+}
+
+QString DictionaryModel::groupName(quint8 groupId)
+{
+    switch (groupId) {
+    case 0x01:
+        return QStringLiteral("0x01 ADC configuration");
+    case 0x02:
+        return QStringLiteral("0x02 Current measurement configuration");
+    case 0x03:
+        return QStringLiteral("0x03 PWM configuration");
+    case 0x04:
+        return QStringLiteral("0x04 FOC configuration and current/voltage setpoints");
+    case 0x05:
+        return QStringLiteral("0x05 FOC d-axis PI configuration");
+    case 0x06:
+        return QStringLiteral("0x06 FOC q-axis PI configuration");
+    case 0x07:
+        return QStringLiteral("0x07 Speed control configuration and setpoints");
+    case 0x08:
+        return QStringLiteral("0x08 Resolver configuration");
+    case 0x09:
+        return QStringLiteral("0x09 Motor model and decoupling configuration");
+    case 0x20:
+        return QStringLiteral("0x20 FOC runtime state");
+    case 0x21:
+        return QStringLiteral("0x21 FOC currents and voltages");
+    case 0x22:
+        return QStringLiteral("0x22 PWM duty telemetry");
+    case 0x23:
+        return QStringLiteral("0x23 PI runtime state");
+    case 0x24:
+        return QStringLiteral("0x24 Resolver telemetry");
+    case 0x25:
+        return QStringLiteral("0x25 ADC runtime state");
+    case 0x26:
+        return QStringLiteral("0x26 Current loop runtime state");
+    case 0x27:
+        return QStringLiteral("0x27 Speed telemetry");
+    default:
+        return QStringLiteral("0x%1 Other").arg(QString::number(groupId, 16).toUpper().rightJustified(2, QLatin1Char('0')));
     }
 }
 

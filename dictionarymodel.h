@@ -37,6 +37,7 @@ public:
         TypeNameRole,
         AccessRole,
         AccessNameRole,
+        GroupNameRole,
         ValueRole,
         ValueTextRole,
         EditableRole,
@@ -80,6 +81,7 @@ public:
     static int byteSizeForType(quint8 type);
     static QString typeName(quint8 type);
     static QString accessName(quint8 access);
+    static QString groupName(quint8 groupId);
     static QString valueToText(const QVariant &value, quint8 type);
 
 private:

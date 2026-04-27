@@ -55,7 +55,7 @@ ApplicationWindow {
         return base.toLowerCase().indexOf(query.toLowerCase()) >= 0
     }
 
-    function rowMatchesFilter(address, groupId, name, unit, typeName, accessName, plotEnabled) {
+    function rowMatchesFilter(address, groupId, groupName, name, unit, typeName, accessName, plotEnabled) {
         if (root.showPlotOnly && !plotEnabled) {
             return false
         }
@@ -68,7 +68,7 @@ ApplicationWindow {
         }
         const addressHex = "0x" + address.toString(16).padStart(4, "0")
         const groupHex = "0x" + groupId.toString(16).padStart(2, "0")
-        const bucket = name + " " + unit + " " + typeName + " " + accessName + " " + addressHex + " " + groupHex
+        const bucket = name + " " + unit + " " + typeName + " " + accessName + " " + groupName + " " + addressHex + " " + groupHex
         return containsText(bucket, query)
     }
 
@@ -665,12 +665,43 @@ ApplicationWindow {
                             spacing: 2
                             reuseItems: true
                             model: root.dictionaryModelObj
+                            section.property: "groupName"
+                            section.criteria: ViewSection.FullString
+
+                            section.delegate: Rectangle {
+                                required property string section
+
+                                width: dictList.width
+                                height: 32
+                                color: "#dfe8f1"
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    spacing: 8
+
+                                    Label {
+                                        text: section
+                                        font.bold: true
+                                        color: root.pageAccent
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        implicitHeight: 1
+                                        color: "#c2cfdb"
+                                    }
+                                }
+                            }
 
                             delegate: Rectangle {
                                 id: rowDelegate
                                 required property int index
                                 required property int address
                                 required property int groupId
+                                required property string groupName
                                 required property string name
                                 required property string typeName
                                 required property string accessName
@@ -682,6 +713,7 @@ ApplicationWindow {
                                 readonly property bool visibleByFilter: root.rowMatchesFilter(
                                                                           rowDelegate.address,
                                                                           rowDelegate.groupId,
+                                                                          rowDelegate.groupName,
                                                                           rowDelegate.name,
                                                                           rowDelegate.unit,
                                                                           rowDelegate.typeName,
